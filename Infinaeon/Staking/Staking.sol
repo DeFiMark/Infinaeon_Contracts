@@ -270,11 +270,8 @@ interface IERC20 {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 }
 
-// SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.0.0) (utils/structs/EnumerableSet.sol)
 // This file was procedurally generated from scripts/generate/templates/EnumerableSet.js.
-
-pragma solidity 0.8.14;
 
 /**
  * @dev Library for managing
@@ -710,6 +707,7 @@ contract InfinaeonStaking is Ownable {
     event Deposit(address depositor, uint256 amountToken);
     event Withdraw(address withdrawer, uint256 amountToken);
     event FeeTaken(uint256 fee);
+    event Transfer(address indexed from, address indexed to, uint256 value);
 
     constructor(
         address token_, 
@@ -1136,6 +1134,6 @@ contract InfinaeonStaking is Ownable {
             balanceList[i] = balanceOf(holder);
             unchecked { ++i; }
         }
-        return holderList;
+        return (holderList, balanceList);
     }
 }
