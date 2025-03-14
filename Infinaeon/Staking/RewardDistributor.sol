@@ -150,7 +150,6 @@ contract Distributor is Ownable {
         address _stakingPool, 
         uint256 _timeBuffer
     ) {
-        token = IERC20(_token);
         stakingPool = _stakingPool;
         lastTime = block.timestamp + _timeBuffer;
     }
