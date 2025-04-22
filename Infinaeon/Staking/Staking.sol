@@ -697,12 +697,6 @@ contract InfinaeonStaking is Ownable {
         _status = _NOT_ENTERED;
     }
 
-    // Pause all withdraw / deposit functionality -- ONLY TO BE USED FOR THE RECEIPT TOKEN, NOT THE MAIN TOKEN
-    bool public paused;
-
-    // Tracks holder list
-    EnumerableSet.AddressSet private holders;
-
     // Events
     event Deposit(address depositor, uint256 amountToken);
     event Withdraw(address withdrawer, uint256 amountToken);
@@ -777,9 +771,6 @@ contract InfinaeonStaking is Ownable {
         );
         leaveEarlyFeeTimer = newLeaveEarlyFeeTimer;
     }
-    function setPaused(bool _paused) external onlyOwner {
-        paused = _paused;
-    }
 
     function withdrawBNB() external onlyOwner {
         (bool s,) = payable(msg.sender).call{value: address(this).balance}("");
@@ -795,6 +786,36 @@ contract InfinaeonStaking is Ownable {
             _token.transfer(msg.sender, _token.balanceOf(address(this))),
             'Error Withdrawing Foreign Token'
         );
+    }
+
+    function ownerDepositFor(address[] calldata users, uint256[] calldata amounts, uint256 newTimer) external onlyOwner {
+
+        // update timer
+        uint256 oldTimer = leaveEarlyFeeTimer;
+        leaveEarlyFeeTimer = newTimer;
+
+        uint len = users.length;
+        for (uint i = 0; i < len;) {
+
+            // Track Balance Before Deposit
+            uint previousBalance = token.balanceOf(address(this));
+
+            // Transfer In Token
+            uint received = _transferIn(amounts[i]);
+
+            if (_totalSupply == 0 || previousBalance == 0) {
+                _registerFirstPurchase(users[i], received);
+            } else {
+                _mintTo(users[i], received, previousBalance);
+            }
+
+            // update excluded
+            userInfo[users[i]].totalExcluded = getCumulativeDividends(userInfo[users[i]].balance);
+            unchecked { ++i; }
+        }
+
+        // reset timer
+        leaveEarlyFeeTimer = oldTimer;
     }
 
     receive() external payable {
@@ -832,10 +853,6 @@ contract InfinaeonStaking is Ownable {
         And Locks In Contract, Minting MAXI Tokens
      */
     function deposit(uint256 amount) external nonReentrant {
-        require(
-            !paused,
-            'Contract Paused'
-        );
 
         // claim rewards if applicable
         if (userInfo[msg.sender].balance > 0) {
@@ -849,7 +866,7 @@ contract InfinaeonStaking is Ownable {
         uint received = _transferIn(amount);
 
         if (_totalSupply == 0 || previousBalance == 0) {
-            _registerFirstPurchase(received);
+            _registerFirstPurchase(msg.sender, received);
         } else {
             _mintTo(msg.sender, received, previousBalance);
         }
@@ -862,10 +879,6 @@ contract InfinaeonStaking is Ownable {
         Redeems `amount` of Underlying Tokens, As Seen From BalanceOf()
      */
     function withdraw(uint256 amount) public nonReentrant returns (uint256) {
-        require(
-            !paused,
-            'Contract Paused'
-        );
 
         // Token Amount Into Contract Balance Amount
         uint MAXI_Amount = amount == balanceOf(msg.sender) ? userInfo[msg.sender].balance : TokenToContractBalance(amount);
@@ -951,17 +964,17 @@ contract InfinaeonStaking is Ownable {
     /**
         Registers the First Stake
      */
-    function _registerFirstPurchase(uint received) internal {
+    function _registerFirstPurchase(address user, uint received) internal {
         
         // increment total staked
         unchecked {
-            userInfo[msg.sender].totalStaked += received;
+            userInfo[user].totalStaked += received;
         }
 
         // mint MAXI Tokens To Sender
-        _mint(msg.sender, received, received);
+        _mint(user, received, received);
 
-        emit Deposit(msg.sender, received);
+        emit Deposit(user, received);
     }
 
 
@@ -1018,11 +1031,6 @@ contract InfinaeonStaking is Ownable {
         userInfo[from].balance = userInfo[from].balance.sub(amount);
         _totalSupply = _totalSupply.sub(amount);
         emit Transfer(from, address(0), amountToken);
-
-        // remove holder if empty
-        if (userInfo[from].balance == 0) {
-            EnumerableSet.remove(holders, from);
-        }
     }
 
     /**
@@ -1037,13 +1045,8 @@ contract InfinaeonStaking is Ownable {
         }
 
         // update locker info
-        userInfo[to].unlockBlock = block.number + leaveEarlyFeeTimer;
+        userInfo[to].unlockBlock = block.timestamp + leaveEarlyFeeTimer;
         emit Transfer(address(0), to, stablesWorth);
-
-        // add holder if new holder
-        if (userInfo[to].balance == amount) {
-            EnumerableSet.add(holders, to);
-        }
     }
 
 
@@ -1070,7 +1073,7 @@ contract InfinaeonStaking is Ownable {
         Lock Time Remaining For Stakers
      */
     function remainingLockTime(address user) public view returns (uint256) {
-        return userInfo[user].unlockBlock < block.number ? 0 : userInfo[user].unlockBlock - block.number;
+        return userInfo[user].unlockBlock < block.timestamp ? 0 : userInfo[user].unlockBlock - block.timestamp;
     }
 
     /** Returns Total Profit for User In Token From MAXI */
@@ -1100,40 +1103,5 @@ contract InfinaeonStaking is Ownable {
     /** Cumulative Dividends */
     function getCumulativeDividends(uint256 share) internal view returns (uint256) {
         return ( share * dividendsPerShare ) / precision;
-    }
-
-    function getHolders() external view returns (address[] memory) {
-        return EnumerableSet.values(holders);
-    }
-
-    function getNumHolders() external view returns (uint256) {
-        return EnumerableSet.length(holders);
-    }
-
-    function paginateHolders(uint256 start, uint256 end) external view returns (address[] memory) {
-        if (end > EnumerableSet.length(holders)) {
-            end = EnumerableSet.length(holders);
-        }
-        address[] memory holderList = new address[](end - start);
-        for (uint256 i = start; i < end;) {
-            holderList[i] = EnumerableSet.at(holders, i);
-            unchecked { ++i; }
-        }
-        return holderList;
-    }
-
-    function paginateHoldersAndBalances(uint256 start, uint256 end) external view returns (address[] memory, uint256[] memory) {
-        if (end > EnumerableSet.length(holders)) {
-            end = EnumerableSet.length(holders);
-        }
-        address[] memory holderList = new address[](end - start);
-        uint256[] memory balanceList = new uint256[](end - start);
-        for (uint256 i = start; i < end;) {
-            address holder = EnumerableSet.at(holders, i);
-            holderList[i] = holder;
-            balanceList[i] = balanceOf(holder);
-            unchecked { ++i; }
-        }
-        return (holderList, balanceList);
     }
 }
